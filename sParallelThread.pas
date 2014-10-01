@@ -5,7 +5,8 @@
 
   Changelog:
 
-  v0.5 - first release
+              v0.5 - first release
+  2014-10-01  v0.6 - use thread timer instead of TTimer
 
 }
 unit sParallelThread;
@@ -18,7 +19,7 @@ uses
   , SyncObjs
   , ExtCtrls
   , SysUtils
-  ;
+  , IdGlobal;
 
 type
 
@@ -41,7 +42,17 @@ type
     function IsBusy: Boolean;
     procedure Start(AData: TObject);
   end;
-  
+  TsThreadTimer = class(TThread)
+  private
+    FEvent: TEvent;
+    FOnTimer: TNotifyEvent;
+  protected
+    procedure Execute; override;
+  public
+    constructor Create;
+    destructor Destroy; override;
+    property OnTimer: TNotifyEvent read FOnTimer write FOnTimer;
+  end;
   TsParallelThreadManager = class(TObject)
   private
     FCS: TCriticalSection;
@@ -49,7 +60,7 @@ type
     FOnError: TsErrorEvent;
     FOnParallelWork: TsParallelEvent;
     FThreadList: TList;
-    FTimer: TTimer;
+    FTimer: TsThreadTimer;
     function GetFreeThread: TsParallelThread;
     procedure OnTimer(Sener: TObject);
   public
@@ -63,6 +74,8 @@ type
 
 
 
+
+
 implementation
 
 constructor TsParallelThreadManager.Create;
@@ -72,16 +85,14 @@ begin
   FList := TList.Create;
   FThreadList := TObjectList.Create;
   FThreadList.Add(TsParallelThread.Create(self));
-  FTimer := TTimer.Create(nil);
-  FTimer.Interval := 1;
+  FTimer := TsThreadTimer.Create;
   FTimer.OnTimer :=  OnTimer;
-  FTimer.Enabled := True;
+
 end;
 
 destructor TsParallelThreadManager.Destroy;
 begin
   inherited;
-  FTimer.Enabled := False;
   FTimer.Free;
   FThreadList.Free;
   FList.Free;
@@ -222,6 +233,34 @@ begin
   FData := AData;
   if Suspended then
     Resume;
+end;
+
+constructor TsThreadTimer.Create;
+begin
+  inherited Create(True);
+  FEvent := TEvent.Create(nil, True, False, '');
+  Resume;
+end;
+
+destructor TsThreadTimer.Destroy;
+begin
+  Terminate;
+
+  FEvent.ResetEvent;
+  FEvent.Free;
+  inherited;
+end;
+
+procedure TsThreadTimer.Execute;
+begin
+  while not Terminated do
+  begin
+    if Assigned(FOnTimer) then
+      FOnTimer(self);
+
+    FEvent.WaitFor(100);
+  
+  end;
 end;
 
 end.
