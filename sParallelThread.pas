@@ -7,6 +7,7 @@
 
               v0.5 - first release
   2014-10-01  v0.6 - use thread timer instead of TTimer
+  2014-10-03  v0.7 - fixed mem leaks, data is freed within thread
 
 }
 unit sParallelThread;
@@ -19,7 +20,7 @@ uses
   , SyncObjs
   , ExtCtrls
   , SysUtils
-  , IdGlobal;
+  ;
 
 type
 
@@ -28,7 +29,6 @@ type
   TsParallelThreadManager = class;
   TsParallelThread = class(TThread)
   private
-    FBusy: Boolean;
     FCS: TCriticalSection;
     FData: TObject;
     FException: Exception;
@@ -56,6 +56,7 @@ type
   TsParallelThreadManager = class(TObject)
   private
     FCS: TCriticalSection;
+    FDestroying: Boolean;
     FList: TList;
     FOnError: TsErrorEvent;
     FOnParallelWork: TsParallelEvent;
@@ -81,8 +82,9 @@ implementation
 constructor TsParallelThreadManager.Create;
 begin
   inherited;
+  FDestroying := False;
   FCS := TCriticalSection.Create;
-  FList := TList.Create;
+  FList := TObjectList.Create(False);
   FThreadList := TObjectList.Create;
   FThreadList.Add(TsParallelThread.Create(self));
   FTimer := TsThreadTimer.Create;
@@ -93,6 +95,16 @@ end;
 destructor TsParallelThreadManager.Destroy;
 begin
   inherited;
+  FDestroying := True;
+  FCS.Enter;
+
+  try
+    (FList as TObjectList).OwnsObjects := True;
+    FList.Clear;
+
+  finally
+    FCS.LEave;
+  end;
   FTimer.Free;
   FThreadList.Free;
   FList.Free;
@@ -120,6 +132,8 @@ var
   data: TObject;
   thread: TsParallelThread;
 begin
+  if FDestroying then
+    exit;
   data := nil;
   thread := GetFreeThread;
   if not Assigned(thread) then
@@ -146,6 +160,8 @@ end;
 
 procedure TsParallelThreadManager.Push(AData: TObject);
 begin
+  if FDestroying then
+    exit;
   FCS.Enter;
   try
     FList.Add(AData)
@@ -161,13 +177,21 @@ constructor TsParallelThread.Create(AManger: TsParallelThreadManager);
 begin
   inherited Create(True);
   FManager := AManger;
-  FBusy := False;
+
   FCS := TCriticalSection.Create;
+  FData := nil;
 end;
 
 destructor TsParallelThread.Destroy;
 begin
   inherited;
+  FCS.Enter;
+  try
+    if Assigned(FData) then
+      FreeAndNil(FData);
+  finally
+    FCS.Leave;
+  end;
   FCS.Free;
 end;
 
@@ -180,17 +204,15 @@ procedure TsParallelThread.Execute;
 begin
   while not Terminated do
   begin
-    FCS.Enter;
-    try
-      FBusy := True;
-
-    finally
-      FCS.Leave;
-    end;
     try
       try
-        if Assigned(FManager.OnParallelWork) then
-          FManager.OnParallelWork(FData);
+        FCS.Enter;
+        try
+          if Assigned(FManager.OnParallelWork) then
+            FManager.OnParallelWork(FData);
+        finally
+          FCS.Leave;
+        end;
       except
         on E: exception  do
         begin
@@ -205,8 +227,8 @@ begin
     finally
       FCS.Enter;
       try
-        FBusy := False;
-
+        if Assigned(FData) then
+          FreeAndNil(FData);
       finally
         FCS.Leave;
       end;
@@ -222,7 +244,7 @@ function TsParallelThread.IsBusy: Boolean;
 begin
   FCS.Enter;
   try
-  Result := FBusy;
+    Result := Assigned(FData);
   finally
     FCS.Leave;
   end;
@@ -230,7 +252,13 @@ end;
 
 procedure TsParallelThread.Start(AData: TObject);
 begin
-  FData := AData;
+  FCS.Enter;
+  try
+    assert(not Assigned(FData), 'fdata');
+    FData := AData;
+  finally
+    FCS.Leave;
+  end;
   if Suspended then
     Resume;
 end;
