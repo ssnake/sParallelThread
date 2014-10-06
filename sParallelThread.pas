@@ -8,6 +8,7 @@
               v0.5 - first release
   2014-10-01  v0.6 - use thread timer instead of TTimer
   2014-10-03  v0.7 - fixed mem leaks, data is freed within thread
+  2014-10-06  v0.71 - fixed frozen thread issue
 
 }
 unit sParallelThread;
@@ -256,11 +257,15 @@ begin
   try
     assert(not Assigned(FData), 'fdata');
     FData := AData;
+
+  if Suspended then
+  begin
+    sleep(1);
+    Resume;
+  end;
   finally
     FCS.Leave;
   end;
-  if Suspended then
-    Resume;
 end;
 
 constructor TsThreadTimer.Create;
@@ -274,7 +279,7 @@ destructor TsThreadTimer.Destroy;
 begin
   Terminate;
 
-  FEvent.ResetEvent;
+  FEvent.SetEvent;
   FEvent.Free;
   inherited;
 end;
@@ -283,6 +288,7 @@ procedure TsThreadTimer.Execute;
 begin
   while not Terminated do
   begin
+    FEvent.ResetEvent;
     if Assigned(FOnTimer) then
       FOnTimer(self);
 
