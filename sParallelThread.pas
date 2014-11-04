@@ -9,6 +9,8 @@
   2014-10-01  v0.6 - use thread timer instead of TTimer
   2014-10-03  v0.7 - fixed mem leaks, data is freed within thread
   2014-10-06  v0.71 - fixed frozen thread issue
+  2014-10-07  v0.8  - got rid of timer in TsParallelManager
+                      use IParallelData instead of TObject
 
 }
 unit sParallelThread;
@@ -24,14 +26,70 @@ uses
   ;
 
 type
+  IParallelData = interface(IInterface)
+  ['{0B6BC72A-1090-4B0E-85B3-C7FF40139888}']
+    function GetAnsiStr1: Ansistring; stdcall;
+    function GetAnsiStr2: Ansistring; stdcall;
+    function GetAnsiStr3: Ansistring; stdcall;
+    function GetInt1: Integer; stdcall;
+    function GetInt2: Integer; stdcall;
+    function GetInt3: Integer; stdcall;
+    function GetObjectList: TList; stdcall;
+    function GetStrList: TStrings; stdcall;
+    procedure SetAnsiStr1(const Value: Ansistring); stdcall;
+    procedure SetAnsiStr2(const Value: Ansistring); stdcall;
+    procedure SetAnsiStr3(const Value: Ansistring); stdcall;
+    procedure SetInt1(const Value: Integer); stdcall;
+    procedure SetInt2(const Value: Integer); stdcall;
+    procedure SetInt3(const Value: Integer); stdcall;
+    property AnsiStr1: Ansistring read GetAnsiStr1 write SetAnsiStr1;
+    property AnsiStr2: Ansistring read GetAnsiStr2 write SetAnsiStr2;
+    property AnsiStr3: Ansistring read GetAnsiStr3 write SetAnsiStr3;
+    property Int1: Integer read GetInt1 write SetInt1;
+    property Int2: Integer read GetInt2 write SetInt2;
+    property Int3: Integer read GetInt3 write SetInt3;
+    property ObjectList: TList read GetObjectList;
+    property StrList: TStrings read GetStrList;
+  end;
 
-  TsParallelEvent = procedure(AData: TObject) of object;
+  TsParallelData = class(TInterfacedObject, IParallelData)
+  private
+    FAnsiStr1: Ansistring;
+    FAnsiStr2: Ansistring;
+    FAnsiStr3: Ansistring;
+    FInt1: Integer;
+    FInt2: Integer;
+    FInt3: Integer;
+    FObjectList: TList;
+    FStrList: TStrings;
+  public
+    constructor Create;
+    destructor Destroy; override;
+  published
+    function GetAnsiStr1: Ansistring; stdcall;
+    function GetAnsiStr2: Ansistring; stdcall;
+    function GetAnsiStr3: Ansistring; stdcall;
+    function GetInt1: Integer; stdcall;
+    function GetInt2: Integer; stdcall;
+    function GetInt3: Integer; stdcall;
+    function GetObjectList: TList; stdcall;
+    function GetStrList: TStrings; stdcall;
+    procedure SetAnsiStr1(const Value: Ansistring); stdcall;
+    procedure SetAnsiStr2(const Value: Ansistring); stdcall;
+    procedure SetAnsiStr3(const Value: Ansistring); stdcall;
+    procedure SetInt1(const Value: Integer); stdcall;
+    procedure SetInt2(const Value: Integer); stdcall;
+    procedure SetInt3(const Value: Integer); stdcall;
+
+  end;
+  
+  TsParallelEvent = procedure(AData: IParallelData) of object;
   TsErrorEvent = procedure(E: Exception) of object;
   TsParallelThreadManager = class;
   TsParallelThread = class(TThread)
   private
     FCS: TCriticalSection;
-    FData: TObject;
+    FDataList: TInterfaceList;
     FException: Exception;
     FManager: TsParallelThreadManager;
     procedure DoError;
@@ -40,8 +98,8 @@ type
   public
     constructor Create(AManger: TsParallelThreadManager);
     destructor Destroy; override;
-    function IsBusy: Boolean;
-    procedure Start(AData: TObject);
+    function WorkAmount: Integer;
+    procedure Start(AData: IParallelData);
   end;
   TsThreadTimer = class(TThread)
   private
@@ -58,21 +116,20 @@ type
   private
     FCS: TCriticalSection;
     FDestroying: Boolean;
-    FList: TList;
     FOnError: TsErrorEvent;
     FOnParallelWork: TsParallelEvent;
     FThreadList: TList;
-    FTimer: TsThreadTimer;
     function GetFreeThread: TsParallelThread;
-    procedure OnTimer(Sener: TObject);
   public
     constructor Create;
     destructor Destroy; override;
-    procedure Push(AData: TObject);
+    procedure Push(AData: IParallelData);
     property OnError: TsErrorEvent read FOnError write FOnError;
     property OnParallelWork: TsParallelEvent read FOnParallelWork write
         FOnParallelWork;
   end;
+
+
 
 
 
@@ -85,11 +142,10 @@ begin
   inherited;
   FDestroying := False;
   FCS := TCriticalSection.Create;
-  FList := TObjectList.Create(False);
+ 
   FThreadList := TObjectList.Create;
   FThreadList.Add(TsParallelThread.Create(self));
-  FTimer := TsThreadTimer.Create;
-  FTimer.OnTimer :=  OnTimer;
+
 
 end;
 
@@ -99,78 +155,42 @@ begin
   FDestroying := True;
   FCS.Enter;
 
-  try
-    (FList as TObjectList).OwnsObjects := True;
-    FList.Clear;
 
-  finally
-    FCS.LEave;
-  end;
-  FTimer.Free;
   FThreadList.Free;
-  FList.Free;
+
   FCS.Free;
 end;
 
 function TsParallelThreadManager.GetFreeThread: TsParallelThread;
 var
-  i: Integer;
+  i, c, w: Integer;
+  thread: TsParallelThread;
 begin
-
+  Result := nil;
+  c :=  MaxInt;
   for I := 0 to FThreadList.Count - 1 do
   begin
-    Result := TsParallelThread(FThreadList[I]);
-    if not Result.IsBusy then
-      exit;
+    thread := TsParallelThread(FThreadList[I]);
+    w := thread.WorkAmount;
+    if c > w then
+    begin
+      Result := thread;
+      c := w;
+    end;
+
   end;
-
-
-  Result := nil;
 end;
 
-procedure TsParallelThreadManager.OnTimer(Sener: TObject);
+procedure TsParallelThreadManager.Push(AData: IParallelData);
 var
-  data: TObject;
   thread: TsParallelThread;
 begin
   if FDestroying then
     exit;
-  data := nil;
+
   thread := GetFreeThread;
-  if not Assigned(thread) then
-    exit;
-  
-
-  FCS.Enter;
-  try
-    if FList.Count > 0 then
-    begin
-      data := FList[0];
-      FList.Delete(0);
-
-    end;
-  finally
-    FCS.Leave;
-  end;
-
-  if Assigned(data) then
-    thread.Start(data);
-
-
-end;
-
-procedure TsParallelThreadManager.Push(AData: TObject);
-begin
-  if FDestroying then
-    exit;
-  FCS.Enter;
-  try
-    FList.Add(AData)
-
-  finally
-    FCS.Leave;
-  end;
-
+  assert(Assigned(thread));
+  thread.Start(AData); 
 
 end;
 
@@ -178,9 +198,8 @@ constructor TsParallelThread.Create(AManger: TsParallelThreadManager);
 begin
   inherited Create(True);
   FManager := AManger;
-
+  FDataList := TInterfaceList.Create;
   FCS := TCriticalSection.Create;
-  FData := nil;
 end;
 
 destructor TsParallelThread.Destroy;
@@ -188,8 +207,8 @@ begin
   inherited;
   FCS.Enter;
   try
-    if Assigned(FData) then
-      FreeAndNil(FData);
+    if Assigned(FDataList) then
+      FreeAndNil(FDataList);
   finally
     FCS.Leave;
   end;
@@ -198,40 +217,42 @@ end;
 
 procedure TsParallelThread.DoError;
 begin
-  FManager.OnError(FException);  
+  FManager.OnError(FException);
 end;
 
 procedure TsParallelThread.Execute;
+var
+  data: IParallelData;
 begin
   while not Terminated do
   begin
-    try
+
+    while WorkAmount > 0 do
+    begin
       try
-        FCS.Enter;
         try
+          FCS.Enter;
+          try
+            data := FDataList[0] as IParallelData;
+            FDatalist.Delete(0);
+          finally
+            FCS.Leave;
+          end;
+
           if Assigned(FManager.OnParallelWork) then
-            FManager.OnParallelWork(FData);
-        finally
-          FCS.Leave;
+            FManager.OnParallelWork(data);
+        except
+          on E: exception  do
+          begin
+            FException := E;
+            if Assigned(FManager.OnError) then
+              Synchronize(DoError);
+          end;
+
+
         end;
-      except
-        on E: exception  do
-        begin
-          FException := E;
-          if Assigned(FManager.OnError) then
-            Synchronize(DoError);
-        end;
 
-
-      end;
-
-    finally
-      FCS.Enter;
-      try
-        if Assigned(FData) then
-          FreeAndNil(FData);
       finally
-        FCS.Leave;
       end;
 
     end;
@@ -241,29 +262,28 @@ begin
 
 end;
 
-function TsParallelThread.IsBusy: Boolean;
+function TsParallelThread.WorkAmount: Integer;
 begin
   FCS.Enter;
   try
-    Result := Assigned(FData);
+    Result := FDataList.Count;
   finally
     FCS.Leave;
   end;
 end;
 
-procedure TsParallelThread.Start(AData: TObject);
+procedure TsParallelThread.Start(AData: IParallelData);
 begin
   FCS.Enter;
   try
-    assert(not Assigned(FData), 'fdata');
-    FData := AData;
+    FDataList.Add(AData);
 
   if Suspended then
   begin
     sleep(1);
     Resume;
   end;
-  finally
+  finally                   
     FCS.Leave;
   end;
 end;
@@ -295,6 +315,96 @@ begin
     FEvent.WaitFor(100);
   
   end;
+end;
+
+constructor TsParallelData.Create;
+begin
+  inherited;
+  FObjectList := TList.Create;
+  FStrList := TStringList.Create;
+  FAnsiStr1 := '';
+  FAnsiStr2 := '';
+  FAnsiStr3 := '';
+  FInt1 := 0;
+  FInt2 := 0;
+  FInt3 := 0;
+end;
+
+destructor TsParallelData.Destroy;
+begin
+  FObjectList.Free;
+  FStrList.Free;
+  inherited;
+end;
+
+function TsParallelData.GetAnsiStr1: Ansistring;
+begin
+  Result := FAnsiStr1;
+end;
+
+function TsParallelData.GetAnsiStr2: Ansistring;
+begin
+  Result := FAnsiStr2;
+end;
+
+function TsParallelData.GetAnsiStr3: Ansistring;
+begin
+  Result := FAnsiStr3;
+end;
+
+function TsParallelData.GetInt1: Integer;
+begin
+  Result := FInt1;
+end;
+
+function TsParallelData.GetInt2: Integer;
+begin
+  Result := Fint2;
+end;
+
+function TsParallelData.GetInt3: Integer;
+begin
+  Result := Fint3;
+end;
+
+function TsParallelData.GetObjectList: TList;
+begin
+  Result := FObjectList;
+end;
+
+function TsParallelData.GetStrList: TStrings;
+begin
+  Result := FStrList;
+end;
+
+procedure TsParallelData.SetAnsiStr1(const Value: Ansistring);
+begin
+  FAnsiStr1 := Value;
+end;
+
+procedure TsParallelData.SetAnsiStr2(const Value: Ansistring);
+begin
+  FAnsiStr2 := Value;
+end;
+
+procedure TsParallelData.SetAnsiStr3(const Value: Ansistring);
+begin
+  FAnsiStr3 := Value;
+end;
+
+procedure TsParallelData.SetInt1(const Value: Integer);
+begin
+  FInt1 := Value;
+end;
+
+procedure TsParallelData.SetInt2(const Value: Integer);
+begin
+  FInt2 := Value;
+end;
+
+procedure TsParallelData.SetInt3(const Value: Integer);
+begin
+  Fint3 := Value;
 end;
 
 end.

@@ -23,20 +23,39 @@ uses
   ;
 
 type
-  // Test methods for class TsParallelThreadManager
-  
+  // TestTsParallelData methods for class TsParallelThreadManager
+
   TestTsParallelThreadManager = class(TTestCase)
   private
     FsParallelThreadManager: TsParallelThreadManager;
     FTestPushIsOk: Boolean;
   public
     procedure Delay(AInterval: Integer);
-  procedure OnParallelWork(AData: TObject);
+  procedure OnParallelWork(AData: IParallelData);
+    procedure OnTestTsParallelData(AData: IParallelData);
     procedure SetUp; override;
     procedure TearDown; override;
   published
+    procedure TestTsParallelData;
     procedure TestPush;
   end;
+
+  IMyParallelData = interface (IParallelData)
+  ['{B1B1860C-537D-4C10-8C78-865CC6D6E571}']
+    function GetOk: Boolean; stdcall;
+    procedure SetOk(const Value: Boolean); stdcall;
+    property Ok: Boolean read GetOk write SetOk;
+
+  end;
+  TParallelData = class(TsParallelData, IMyParallelData)
+  private
+    FOk: Boolean;
+    function GetOk: Boolean; stdcall;
+    procedure SetOk(const Value: Boolean); stdcall;
+  public
+    constructor Create;
+  end;
+
 
 implementation
 
@@ -58,15 +77,35 @@ begin
 
 end;
 
-procedure TestTsParallelThreadManager.OnParallelWork(AData: TObject);
+procedure TestTsParallelThreadManager.OnParallelWork(AData: IParallelData);
+var
+  data: IMyParallelData;
 begin
-  FTestPushIsOk := True;
+  data := AData as IMyParallelData;
+  data.Ok := true;
+
+end;
+
+procedure TestTsParallelThreadManager.OnTestTsParallelData(AData:
+    IParallelData);
+begin
+  if (Adata.AnsiStr1 = '1') and
+  (Adata.AnsiStr2 = 'a') and
+  (Adata.AnsiStr3 = 'gfgfgfgfe3') and
+  (Adata.ObjectList.Count = 1) and
+  (trim(Adata.StrList.Text) = 'hello world') and
+  (Adata.Int1 = 1) and
+  (Adata.Int2 = 2) and
+  (Adata.Int3 = 4)
+  then
+    Adata.Int1 := 7070;
+
 end;
 
 procedure TestTsParallelThreadManager.SetUp;
 begin
   FsParallelThreadManager := TsParallelThreadManager.Create;
-  FsParallelThreadManager.OnParallelWork := OnParallelWork;
+ 
 end;
 
 procedure TestTsParallelThreadManager.TearDown;
@@ -75,16 +114,57 @@ begin
   FsParallelThreadManager := nil;
 end;
 
+procedure TestTsParallelThreadManager.TestTsParallelData;
+var
+  data: IParallelData;
+  o: TObject;
+begin
+  FsParallelThreadManager.OnParallelWork := OnTestTsParallelData;
+  data := TsParallelData.Create;
+  data.AnsiStr1 := '1';
+  data.AnsiStr2 := 'a';
+  data.AnsiStr3 := 'gfgfgfgfe3';
+  o := TObject.Create;
+
+  data.ObjectList.Add(o);
+  data.StrList.Text := 'hello world';
+  data.Int1 := 1;
+  data.Int2 := 2;
+  data.Int3 := 4;
+  FsParallelThreadManager.Push(data);
+  Delay(100);
+  Check(data.Int1 = 7070);
+
+end;
+
 procedure TestTsParallelThreadManager.TestPush;
 var
-  AData: TObject;
+  AData: IMyParallelData;
 begin
+  FsParallelThreadManager.OnParallelWork := OnParallelWork;
   FTestPushIsOk := False;
-  AData := TObject.Create;
+  AData := TParallelData.Create;
+
   FsParallelThreadManager.Push(AData);
   Delay(100);
-  Check(FTestPushIsOk);
-  
+  Check(AData.Ok);
+
+end;
+
+constructor TParallelData.Create;
+begin
+  inherited;
+   FOK := False;
+end;
+
+function TParallelData.GetOk: Boolean;
+begin
+  Result := FOk
+end;
+
+procedure TParallelData.SetOk(const Value: Boolean);
+begin
+ FOk := Value;
 end;
 
 initialization
